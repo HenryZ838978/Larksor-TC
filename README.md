@@ -29,24 +29,24 @@
 <tr>
 <td align="center" width="33%">
   <h3>📱</h3>
-  <b>你</b><br>
-  <sub>手机 / iPad / 客户现场<br>外网</sub>
+  <b>You</b><br>
+  <sub>phone / iPad / cafe<br>external network</sub>
 </td>
 <td align="center" width="34%">
   <h3>↔️</h3>
-  <b>飞书 DM</b><br>
-  <sub>合规通道<br>已被公司放行</sub>
+  <b>Feishu DM</b><br>
+  <sub>compliant channel<br>already on the allowlist</sub>
 </td>
 <td align="center" width="33%">
   <h3>🖥️</h3>
-  <b>你的工位 Mac</b><br>
-  <sub>Cursor 团队配额<br>Opus 4.7 Thinking High</sub>
+  <b>Your office Mac</b><br>
+  <sub>Cursor team seat<br>Opus 4.7 Thinking High</sub>
 </td>
 </tr>
 </table>
 
 <p align="center">
-  <i>从你已经付费的 Cursor seat，把 Opus 延伸到任何你能开飞书的设备。</i>
+  <i>Extend the Opus seat you already pay for, to every device you can open Feishu on.</i>
 </p>
 
 ---
@@ -54,13 +54,13 @@
 ## 👀 What it looks like
 
 <p align="center">
-  <img src="assets/feishu-card.svg" alt="Feishu card preview" width="640">
+  <img src="assets/feishu-card.png" alt="Feishu agent card" width="640">
 </p>
 
 <sub align="center">
 
-▾ 流式打字机回答 · ▾ thinking 折叠面板 · ▾ tool calls 折叠面板 · ▾ token + 耗时元数据  
-(SVG mock; 真截图欢迎 PR)
+streaming typewriter answer · collapsible thinking panel · collapsible tool-calls panel · token + elapsed in meta line  
+*(rendered mockup; real screenshots welcome via PR)*
 
 </sub>
 
@@ -68,95 +68,119 @@
 
 ## 🏗 Architecture
 
-<p align="center">
-  <img src="assets/architecture.svg" alt="Architecture" width="820">
-</p>
+```mermaid
+flowchart LR
+    P["📱 Phone / iPad<br/>external network"]
+    F["☁️ Feishu Server<br/>(.cn / .co auto-route)"]
+    M["🖥️ Your Mac (intranet)<br/>bridge.py + cursor-cli<br/>+ lark-oapi SDK + SQLite"]
+    C["🧠 Cursor backend<br/>Opus 4.7 Thinking High"]
 
-```
-[ phone/ipad ]  ──DM──►  [ Feishu WSS ]  ──events──►  [ your Mac ]
-                                                          │
-   ◄──── streaming CardKit replies ◄── lark-oapi SDK ◄── bridge.py
-                                                          │
-                                                          └─► cursor-cli
-                                                              (Opus 4.7)
+    P -->|DM<br/>button<br/>image| F
+    F -->|WSS push| M
+    M -->|HTTPS<br/>CardKit stream| F
+    F -->|streaming card| P
+    M --> C
+    C --> M
 ```
 
-Mac 只发起 **outbound** 连接 — 不需要公网 IP、不需要 VPN、不需要反向代理。
+Mac only initiates **outbound** connections — no public IP, no VPN, no reverse proxy.
 
 ---
 
 ## 🚀 Quick start
 
-<p align="center">
-  <img src="assets/install-flow.svg" alt="Install flow" width="820">
-</p>
+| step | who    | time   | what                                                                       |
+| ---- | ------ | ------ | -------------------------------------------------------------------------- |
+| 1    | you    | 5 min  | create a Feishu app at https://open.feishu.cn/app, grab App ID + Secret    |
+| 2    | Cursor | 1 min  | paste the install prompt below into your Cursor IDE chat                   |
+| 3    | done   |  —     | DM your bot from Feishu, get streaming Opus replies anywhere               |
 
 ```bash
-# 1. clone
+# manual install
 git clone https://github.com/HenryZ838978/Larksor-TC.git ~/larksor-tc
-
-# 2. 去 https://open.feishu.cn/app 创建一个 "<你的名字>的飞书CLI" bot，
-#    勾 im:message + im:message:send_as_bot + cardkit:card:write，
-#    订阅 im.message.receive_v1 + card.action.trigger，记下 App ID + Secret
-
-# 3. install
 LARK_APP_ID=cli_xxxxxxxxxxxxxxxx \
 LARK_APP_SECRET=xxxxxxxxxxxxxxxx \
 bash ~/larksor-tc/install.sh
-
-# 4. 在飞书 DM 你刚建的那个 bot 发 "hi"，应当收到流式卡片
 ```
 
-懒得自己跑命令？把 README 里 "Step 2" 那段贴给你 Cursor IDE 的对话框，它会自动跑完。
+For the **Cursor agent-driven install**, paste this into your Cursor chat:
+
+````text
+I want to install Larksor-TC. Please:
+
+1. Check that ~/larksor-tc/ exists (bridge.py, install.sh, README.md should be there).
+   If not, tell me to `git clone https://github.com/HenryZ838978/Larksor-TC.git ~/larksor-tc`.
+
+2. Get my display name: `git config user.name || whoami | head -c 20`. Call this $MY_NAME.
+
+3. Run `open https://open.feishu.cn/app` to open the Feishu dev console in my browser.
+   Walk me through (from README "Step 1") how to:
+     - create an enterprise self-built app named "${MY_NAME}的飞书CLI"
+     - enable bot capability
+     - add scopes: im:message, im:message:send_as_bot, cardkit:card:write
+     - subscribe events: im.message.receive_v1, card.action.trigger
+     - submit for internal approval
+     - copy App ID + App Secret
+
+4. When I paste App ID + Secret back, run:
+   `LARK_APP_ID=<id> LARK_APP_SECRET=<secret> bash ~/larksor-tc/install.sh`
+
+5. Show me the last 20 lines of the installer output.
+
+6. Tell me to DM the bot from Feishu with "hi" and after 30s
+   `tail -n 20 ~/larksor-tc/bridge.log` to confirm I see `<- ou_...:` and `SDK ws client starting`.
+
+Notes: secret only via env var + 0600 file, install.sh is idempotent, never commit secrets.env.
+````
 
 ---
 
 ## 🎯 Why this exists
 
-|                                          | Without Larksor-TC          | With Larksor-TC              |
-| ---------------------------------------- | --------------------------- | ---------------------------- |
-| 用 Opus 4.7 Thinking High（不在工位 Mac 上时） | $$$ Anthropic 直连 / 限速 third-party | 已付费的 Cursor seat，0 元增量 |
-| 内网代码 + 私有数据                          | VPN + 远程桌面 + 跨网代理      | 飞书 DM，公司本来就放行           |
-| 离开工位时 agent 跑到一半中断                | 等下班                       | 手机点重试 / 切模型 / 换 chat   |
-| 给桌面同事 demo                            | 凑过来看屏幕                  | 群里贴飞书消息                 |
+|                                            | Without Larksor-TC          | With Larksor-TC                  |
+| ------------------------------------------ | --------------------------- | -------------------------------- |
+| Use Opus 4.7 Thinking when not at your Mac | $$$ direct API / rate-limited 3rd party | $0 incremental, uses your paid Cursor seat |
+| Talk to private code from outside          | VPN + RDP + corporate proxy | Feishu DM (already on allowlist) |
+| Agent run interrupted while you're out     | wait until you're back      | retry / cancel / switch from phone |
+| Demo result to a teammate                  | walk over to your screen    | paste a Feishu message in a group |
 
 ---
 
 ## 🧰 What's inside
 
-- 🎴 **CardKit v2 流式卡片**：打字机式 token 输出，markdown 代码高亮，10/s update QPS  
-- 💭 **Thinking 折叠面板**：opus / sonnet thinking 模型的 reasoning 默认收起，点开看  
-- 🔧 **Tool calls 折叠面板**：实时显示 `shell` / `read` / `edit` / `grep` / `glob` / `mcp` 等工具调用，运行中展开，结束自动折叠  
-- 📷 **图片消息**：手机截图 DM 给 bot → 自动落 `~/larksor-tc/inbox/` → 下一条 prompt 自动带上，opus 多模态读图  
-- 📁 **Per-chat workspace**：`/cd ~/proj/foo` 或自然语言 "切到 ~/proj/foo"，每个 chat 独立工作目录  
-- 🪙 **Token + cost 追踪**：SQLite 持久化每个 turn 的 tokens + 耗时；`/cost today` / `/history N`  
-- 💬 **Chat 管理**：`/ls` / `/resume <N>` / `/new`，标题自动用首条 prompt 前 40 字  
-- ⚙️ **launchd 自启 + caffeinate**：开机自动起，跑期间防 idle-sleep  
-- 🚦 **熔断**：15 分钟硬超时，`resource_exhausted` 友好提示，agent 崩了卡片有报错不空挂  
-- 🌐 **lark-oapi SDK 直连**：避免 `lark-cli` subprocess 冷启动延迟，按钮 callback 能正确返回 toast  
+- 🎴 **CardKit v2 streaming card** — typewriter token output, markdown / code blocks, 10 ops/s update cap
+- 💭 **Thinking panel** — collapsed by default; auto-fills if model emits reasoning (opus / sonnet thinking)
+- 🔧 **Tool-calls panel** — live during run (shell / read / edit / grep / glob / mcp / ...), auto-collapses on result
+- 📷 **Image messages** — phone screenshot → DM → auto-saved to `~/larksor-tc/inbox/` → next prompt auto-attaches → opus reads it
+- 📁 **Per-chat workspace** — `/cd ~/proj/foo` or natural-language `切到 ~/proj/foo`, persisted per chat
+- 🪙 **Token + cost tracking** — SQLite per-turn metrics; `/cost today` / `/history N`
+- 💬 **Chat management** — `/ls` / `/resume <N>` / `/new`; title auto-derived from first prompt
+- ⚙️ **launchd autostart + caffeinate** — survives reboot, prevents idle-sleep while running
+- 🚦 **Hard limits** — 15-min agent timeout, `resource_exhausted` hint, non-empty failure card
+- 🌐 **lark-oapi SDK direct** — no `lark-cli` subprocess cold-start, button callbacks return toasts correctly
 
 ---
 
 ## 📜 Commands cheat sheet
 
 ```text
-# 切换
-/model opus              换模型；别名 opus | sonnet | gpt5 | codex | auto
-/cd ~/proj/mtk-infra     切当前 chat 的 workspace
-/new                     新 chat
-/resume 3                切到 /ls 列表第 3 个 chat
+# switch
+/model opus              alias: opus | sonnet | gpt5 | codex | auto
+/cd ~/proj/mtk-infra     per-chat workspace
+/new                     new chat
+/resume 3                switch to /ls position 3
 
-# 信息
+# info
 /help     /status     /history 5     /cost today     /ls
 
-# 操作
-/include path/to/file    把 Mac 文件随下一条 prompt 一起送
-/retry                   重跑上一条
-/cancel                  停掉当前正在跑的 agent
-/plan <prompt>           plan 模式（只读 + 计划）
-/ask  <prompt>           ask 模式（Q&A 只读）
+# act
+/include path/to/file    attach a Mac file to the NEXT prompt
+/retry                   re-run last prompt
+/cancel                  SIGINT the running agent
+/plan <prompt>           plan mode (read-only / planning)
+/ask  <prompt>           ask mode (Q&A read-only)
 
-# 中文自然语言（同样生效）
+# Chinese natural-language (also accepted)
 换模型 opus      切到 ~/proj/foo      用 sonnet 模型
 ```
 
@@ -165,14 +189,14 @@ bash ~/larksor-tc/install.sh
 ## 🔧 Maintenance
 
 ```bash
-tail -f ~/larksor-tc/bridge.log                           # 实时日志
-launchctl kickstart -k gui/$UID/cn.modelbest.larksor-tc   # 重启
-launchctl bootout    gui/$UID/cn.modelbest.larksor-tc     # 临时停
-bash ~/larksor-tc/uninstall.sh                            # 卸载
-bash ~/larksor-tc/uninstall.sh --purge                    # 卸载 + 清历史
+tail -f ~/larksor-tc/bridge.log                           # live log
+launchctl kickstart -k gui/$UID/cn.modelbest.larksor-tc   # restart
+launchctl bootout    gui/$UID/cn.modelbest.larksor-tc     # stop until next login
+bash ~/larksor-tc/uninstall.sh                            # uninstall
+bash ~/larksor-tc/uninstall.sh --purge                    # uninstall + drop history
 ```
 
-要用 **Opus 4.7** 全家，`~/.cursor/cli-config.json` 必须开 Max Mode：
+For Opus 4.7 access, set Max Mode in `~/.cursor/cli-config.json`:
 
 ```json
 { "maxMode": true, "model": { "maxMode": true } }
@@ -182,24 +206,24 @@ bash ~/larksor-tc/uninstall.sh --purge                    # 卸载 + 清历史
 
 ## 🗺 Roadmap
 
-| Phase | Status      | Highlights                                                                 |
-| ----- | ----------- | -------------------------------------------------------------------------- |
-| 1     | ✅ alpha     | cursor-cli backend, 单用户自部署, mdou skill 内部分发                        |
-| 2     | 🚧 planned  | 接 Claude Code / Codex / DeepSeek-harness 作为可替换 backend；群聊 @ 模式 |
-| 3     | 🌱 maybe    | 公司级 cost dashboard, 多人协作 chat, Cloud Agent handoff                 |
+| Phase | Status     | Highlights                                                                |
+| ----- | ---------- | ------------------------------------------------------------------------- |
+| 1     | ✅ alpha    | cursor-cli backend, single-user self-host, mdou skill for internal distro |
+| 2     | 🚧 planned | pluggable executor: Claude Code / Codex / DeepSeek-harness; group @ mode  |
+| 3     | 🌱 maybe   | org-level cost dashboard, multi-user chats, Cloud Agent handoff           |
 
 ---
 
-## 🙏 Credits & Inspiration
+## 🙏 Credits
 
-- [Cursor](https://cursor.com) — the IDE this thing borrows compute from  
-- [Lark Open Platform](https://open.feishu.cn) — the rails this runs on  
-- [`@HenryZ838978/deepseek-harness`](https://github.com/HenryZ838978/deepseek-harness) — sibling project; same dark humor, different beast  
-- [ModelBest](https://modelbest.cn) — for letting me dogfood this internally  
+- [Cursor](https://cursor.com) — the IDE this thing borrows compute from
+- [Lark Open Platform](https://open.feishu.cn) — the rails this runs on
+- [`@HenryZ838978/deepseek-harness`](https://github.com/HenryZ838978/deepseek-harness) — sibling project; same dark humor, different beast
+- [ModelBest](https://modelbest.cn) — for letting me dogfood this internally
 
 <p align="center">
   <sub>
-    ⭐ <b>If this saved you a single train ride back to the office, star the repo.</b> That's all I'm asking.<br>
-    PRs / issues welcome. License: internal alpha, do not commit your <code>secrets.env</code>.
+    ⭐ <b>If this saved you a single train ride back to the office, star the repo.</b> That's the whole ask.<br>
+    PRs / issues welcome. Don't commit your <code>secrets.env</code>.
   </sub>
 </p>
