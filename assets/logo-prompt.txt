@@ -1,0 +1,33 @@
+# Larksor-TC logo prompt
+# Generated via mdou LLM-center → gpt-image-2 (size 1024x1024)
+# Stored alongside assets/logo.png for future regeneration.
+
+A flat illustrated mascot in the same style as a horse-whale hybrid logo:
+a chubby cartoon LARK (云雀) facing left, but instead of feathers its tail
+is a glowing terminal cursor — a single bold blinking underscore extending
+sideways like tail plumage. The bird is standing on a simple flat hexagon
+(the Cursor IDE icon shape). Single orange fill (#EE7B3D) on warm cream
+background (#FAEDD6), bold flat-vector lines, slight surrealism, playful
+and absurd, NO text, NO captions, NO letters in the image, square 1:1.
+
+# --- v3 (final direction): 飞书白底 + Cursor 立方体 + 飞书配色光标 (2026-05-22) ---
+# Output: assets/logo-feishu-cursor.png
+# Generated via mdou LLM-center → gpt-image-2 (size 1024x1024)
+# Clean corporate mashup — no violence, no bird body.
+
+Clean professional app icon logo, square 1:1. White rounded-square background exactly like the Feishu/Lark app icon. Centered on the white tile: the Cursor IDE logo composition — a subtle isometric 3D wireframe glass cube with thin light-gray edges and semi-transparent smoky dark-gray faces, same layout as the official Cursor icon. Inside the cube, replace the plain white cursor arrow with a stylized 3D mouse-pointer prism recolored in the official Feishu/Lark bird palette: teal-green (#00D6B9), sky blue (#3370FF), and navy blue (#133C9A), using three flat geometric color planes on the pointer like the Feishu bird logo shapes. Calm, elegant, corporate-friendly brand mashup. No violence, no cracks, no explosion, no blood, no horror, no bird body, no feathers, no text, no letters, no captions. Minimal, polished, modern SaaS app icon.
+
+# --- v2 (correct concept, too violent): 飞书鸟里长出 Cursor 光标 ---
+# Output: assets/logo-cursor-from-feishu.png
+
+# --- v2 (wrong direction, archived): Cursor 立方体里长出飞书鸟 ---
+# Output: assets/logo-cube-bird.png
+
+# --- 想换风格时，几个方向 ---
+# 1) 更黑色幽默：让鸟戴一个程序员眼镜 + 喝着咖啡 + 尾巴是闪烁光标
+# 2) 更科技：去掉米白底，换成 #0F172A 深色，鸟描线变成霓虹
+# 3) 更可爱：让鸟胖一倍、眼睛大、嘴里叼着 ">_" 符号
+# 4) 更像 deepseek-harness：让鸟头变成 Cursor IDE 那个六边形的脸
+# 5) 更抽象：直接用 ASCII 字符堆出鸟的轮廓
+# 6) 更寄生：鸟从立方体裂缝里钻出，玻璃碎片飞散
+# 7) 更克制：只露出半个鸟头，其余还在 cube 里

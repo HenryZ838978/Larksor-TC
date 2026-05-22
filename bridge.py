@@ -1670,11 +1670,25 @@ def start_sdk_event_loop(state: dict, q: "queue.Queue[Job]",
         try:
             event = data.event
             msg = getattr(event, "message", None)
+            msg_type = getattr(msg, "message_type", None) if msg else None
             content_raw = getattr(msg, "content", None) if msg else None
+
+            text = ""
             try:
-                text = (json.loads(content_raw or "{}").get("text") or "").strip()
+                content = json.loads(content_raw or "{}")
+                if msg_type == "text":
+                    text = (content.get("text") or "").strip()
+                elif msg_type == "post":
+                    # Extract all text spans from rich-text post format
+                    parts: list[str] = []
+                    for line in content.get("content") or []:
+                        for span in line:
+                            if isinstance(span, dict) and span.get("tag") == "text":
+                                parts.append(span.get("text") or "")
+                    text = "\n".join(parts).strip()
             except Exception:
                 text = ""
+
             sender = getattr(event, "sender", None)
             open_id = None
             if sender is not None:
@@ -1683,11 +1697,23 @@ def start_sdk_event_loop(state: dict, q: "queue.Queue[Job]",
                     open_id = getattr(sid, "open_id", None)
             if open_id:
                 state["last_open_id"] = open_id
+
+            # Non-text messages: respond with a friendly hint instead of
+            # silently dropping (was a real source of "为什么没反应").
+            if open_id and msg_type and msg_type not in ("text", "post"):
+                lark_send_text(
+                    open_id,
+                    f"[bridge] 只支持文本消息，收到的是 `{msg_type}`。\n"
+                    f"  · 图片/分享卡片暂不解析\n"
+                    f"  · 要附文件：先 `/include <path>`，再用文字 prompt 提问\n"
+                    f"  · 想看支持的命令：`/help`")
+                return
+
             if not text or not open_id:
                 return
             state["last_prompt"] = text
             save_state(state)
-            log(f"<- {open_id[:14]}...: {text[:80]}")
+            log(f"<- {open_id[:14]}...({msg_type}): {text[:80]}")
             q.put(Job(open_id=open_id, text=text))
         except Exception as exc:
             log(f"on_message error: {exc}")

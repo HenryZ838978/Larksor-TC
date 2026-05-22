@@ -1,10 +1,16 @@
 <p align="center">
-  <img src="assets/hero.svg" alt="Larksor-TC" width="880">
+  <img src="assets/logo.png" alt="Larksor-TC" width="180">
+</p>
+
+<h1 align="center">Larksor-TC</h1>
+
+<p align="center">
+  <strong>L</strong>ark · <strong>C</strong>ursor · <strong>T</strong>erminal · <strong>C</strong>onnect
 </p>
 
 <p align="center">
-  <code>L</code>ark&nbsp;·&nbsp;<code>C</code>ursor&nbsp;·&nbsp;<code>T</code>erminal&nbsp;·&nbsp;<code>C</code>onnect &nbsp;—&nbsp;
-  内网 Mac 上的 Cursor + Opus 4.7，通过飞书在任何地方驱动它
+  内网 Mac 上的 Cursor + Opus 4.7，<br>
+  通过飞书在任何地方驱动它
 </p>
 
 <p align="center">
