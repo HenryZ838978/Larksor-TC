@@ -1,0 +1,25 @@
+# secrets / runtime / generated - never commit
+secrets.env
+secrets.env.*
+state.json
+state.json.bak
+state.db
+state.db-shm
+state.db-wal
+bridge.log
+bridge.log.*
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# editors
+.vscode/
+.idea/
+*.swp
+

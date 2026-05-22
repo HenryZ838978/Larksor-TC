@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <key>Label</key>
+    <string>cn.modelbest.larksor-tc</string>
+
+    <key>WorkingDirectory</key>
+    <string>__HOME__/larksor-tc</string>
+
+    <!--
+      caffeinate -i prevents idle-sleep while the bridge is running.
+      Lid-close still cuts wifi unless "Prevent automatic sleeping when
+      the display is off" is set in System Settings > Battery > Options.
+    -->
+    <key>ProgramArguments</key>
+    <array>
+      <string>/usr/bin/caffeinate</string>
+      <string>-i</string>
+      <string>/usr/bin/python3</string>
+      <string>__HOME__/larksor-tc/bridge.py</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+      <key>HOME</key>
+      <string>__HOME__</string>
+      <key>PATH</key>
+      <string>/opt/homebrew/bin:__HOME__/.npm-global/bin:__HOME__/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+      <key>PYTHONPATH</key>
+      <string>__HOME__/Library/Python/3.9/lib/python/site-packages</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart only on crash, not on clean exit (so we can stop it). -->
+    <key>KeepAlive</key>
+    <dict>
+      <key>SuccessfulExit</key>
+      <false/>
+      <key>Crashed</key>
+      <true/>
+    </dict>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/larksor-tc/bridge.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/larksor-tc/bridge.log</string>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+  </dict>
+</plist>
