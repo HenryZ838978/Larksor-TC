@@ -42,6 +42,7 @@ from typing import Any, Iterable, Optional
 
 ROOT = Path.home() / "larksor-tc"
 STATE_FILE = ROOT / "state.json"  # legacy; migrated into state.db on first run
+INBOX_DIR = ROOT / "inbox"        # downloaded images / files from Feishu
 sys.path.insert(0, str(Path(__file__).parent))
 import db as _db  # noqa: E402
 def _detect_default_model() -> str:
@@ -372,6 +373,58 @@ def close_streaming(card_id: str) -> bool:
                     f"/open-apis/cardkit/v1/cards/{card_id}/settings",
                     data=body)
     return bool(resp) and resp.get("code", -1) == 0
+
+
+def download_image(message_id: str, image_key: str) -> Optional[Path]:
+    """Download an image resource from a Feishu message and save it to
+    ~/larksor-tc/inbox/. Returns the local path on success."""
+    if _sdk_client is None:
+        log("download_image: SDK client not initialized")
+        return None
+    from lark_oapi.api.im.v1 import GetMessageResourceRequest
+    req = (GetMessageResourceRequest.builder()
+           .message_id(message_id).file_key(image_key)
+           .type("image").build())
+    try:
+        resp = _sdk_client.im.v1.message_resource.get(req)
+    except Exception as exc:
+        log(f"download_image exc: {exc}")
+        return None
+    if not _check_resp("download_image", resp):
+        return None
+    raw = getattr(resp, "file", None) or getattr(resp, "raw", None)
+    # lark-oapi exposes resp.file as a Python BinaryIO/bytes-like
+    data: Optional[bytes] = None
+    if raw is None:
+        data = getattr(resp, "data", None) and bytes(resp.data) or None
+    elif hasattr(raw, "read"):
+        try:
+            data = raw.read()
+        except Exception:
+            data = None
+    elif isinstance(raw, (bytes, bytearray)):
+        data = bytes(raw)
+    if not data:
+        log(f"download_image: no bytes returned for {image_key[:14]}...")
+        return None
+    INBOX_DIR.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y%m%d-%H%M%S")
+    short = image_key.split("_")[-1][:10] if "_" in image_key else image_key[:10]
+    # Guess extension from first bytes (PNG/JPEG/GIF/WebP)
+    ext = ".bin"
+    if data[:8].startswith(b"\x89PNG\r\n\x1a\n"):
+        ext = ".png"
+    elif data[:3] == b"\xff\xd8\xff":
+        ext = ".jpg"
+    elif data[:4] == b"GIF8":
+        ext = ".gif"
+    elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        ext = ".webp"
+    out = INBOX_DIR / f"{ts}-{short}{ext}"
+    out.write_bytes(data)
+    os.chmod(out, 0o600)
+    log(f"download_image -> {out} ({len(data)} bytes)")
+    return out
 
 
 def patch_element(card_id: str, element_id: str,
@@ -856,22 +909,46 @@ def cmd_clear_include(state: dict, open_id: str) -> None:
 
 def consume_includes(state: dict, prompt: str) -> tuple[str, list[dict]]:
     """Prefix `prompt` with any queued includes, drain them, and return
-    (augmented_prompt, included_items)."""
+    (augmented_prompt, included_items).
+
+    Two flavors:
+      - text/code files: embed full contents inline under <file>...</file>
+      - images: reference path only, ask the agent to read the file with
+        its `read` tool (cursor-cli will pull the image into model context
+        when the model is multimodal-capable, e.g. opus-4.7).
+    """
     items = state.get("pending_includes") or []
     if not items:
         return prompt, []
-    blocks = ["<files>"]
+
+    file_blocks: list[str] = []
+    image_paths: list[str] = []
     for it in items:
-        suffix = "  (truncated)" if it.get("truncated") else ""
-        blocks.append(f'<file path="{it["path"]}"{suffix}>')
-        blocks.append(it["content"])
-        blocks.append("</file>")
-    blocks.append("</files>")
-    blocks.append("")
-    blocks.append(prompt)
+        if it.get("kind") == "image":
+            image_paths.append(it["path"])
+        else:
+            suffix = "  (truncated)" if it.get("truncated") else ""
+            file_blocks.append(f'<file path="{it["path"]}"{suffix}>\n'
+                               f'{it["content"]}\n</file>')
+
+    parts: list[str] = []
+    if file_blocks:
+        parts.append("<files>")
+        parts.extend(file_blocks)
+        parts.append("</files>")
+    if image_paths:
+        parts.append("<images>")
+        for p in image_paths:
+            parts.append(f'<image path="{p}" />')
+        parts.append("</images>")
+        parts.append(f"(Please open the image(s) above with the `read` "
+                     f"tool to see them — they were sent by the user "
+                     f"alongside this prompt.)")
+    parts.append("")
+    parts.append(prompt)
     state.pop("pending_includes", None)
     save_state(state)
-    return "\n".join(blocks), items
+    return "\n".join(parts), items
 
 
 # ----------------------------------------------------------------------------
@@ -1698,15 +1775,47 @@ def start_sdk_event_loop(state: dict, q: "queue.Queue[Job]",
             if open_id:
                 state["last_open_id"] = open_id
 
-            # Non-text messages: respond with a friendly hint instead of
-            # silently dropping (was a real source of "为什么没反应").
+            # Image messages: download to inbox/, queue as a pending include,
+            # tell the user we're ready for a follow-up text prompt.
+            if open_id and msg_type == "image":
+                try:
+                    img_content = json.loads(content_raw or "{}")
+                except Exception:
+                    img_content = {}
+                image_key = img_content.get("image_key")
+                message_id = getattr(msg, "message_id", None) or \
+                             getattr(msg, "messageId", None)
+                if not image_key or not message_id:
+                    lark_send_text(open_id,
+                                   "[bridge] 收到 image 但缺少 image_key / message_id, 没法下载")
+                    return
+                p = download_image(message_id, image_key)
+                if not p:
+                    lark_send_text(open_id,
+                                   "[bridge] 图片下载失败，请稍后再试或换文字描述")
+                    return
+                entry = {"path": str(p), "content": "",
+                         "size": p.stat().st_size,
+                         "truncated": False, "kind": "image"}
+                state.setdefault("pending_includes", []).append(entry)
+                save_state(state)
+                n = len(state["pending_includes"])
+                lark_send_text(
+                    open_id,
+                    f"📷 收到截图，已存到 `{p.name}` ({p.stat().st_size} bytes)。\n"
+                    f"已排队 {n} 个附件，下一条文字 prompt 会一起带上。\n"
+                    f"比如发：`这张图里的报错是什么意思？` 或 `根据截图改一下我现在的代码`")
+                return
+
+            # Non-image, non-text/post messages: respond with a friendly hint
+            # instead of silently dropping (was a real source of "为什么没反应").
             if open_id and msg_type and msg_type not in ("text", "post"):
                 lark_send_text(
                     open_id,
-                    f"[bridge] 只支持文本消息，收到的是 `{msg_type}`。\n"
-                    f"  · 图片/分享卡片暂不解析\n"
-                    f"  · 要附文件：先 `/include <path>`，再用文字 prompt 提问\n"
-                    f"  · 想看支持的命令：`/help`")
+                    f"[bridge] 暂不支持 `{msg_type}` 类型消息。\n"
+                    f"  · 文字 / 富文本 / 图片 已支持\n"
+                    f"  · 其他文件：用 `/include <path>` 引用 Mac 上文件\n"
+                    f"  · 命令清单：`/help`")
                 return
 
             if not text or not open_id:
