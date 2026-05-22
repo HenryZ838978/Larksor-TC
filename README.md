@@ -1,112 +1,143 @@
 <p align="center">
-  <img src="assets/logo.png" alt="Larksor-TC" width="180">
+  <img src="assets/logo.png" alt="Larksor-TC" width="220">
 </p>
 
 <h1 align="center">Larksor-TC</h1>
 
 <p align="center">
-  <strong>L</strong>ark · <strong>C</strong>ursor · <strong>T</strong>erminal · <strong>C</strong>onnect
+  <b>L</b>ark&nbsp;·&nbsp;<b>C</b>ursor&nbsp;·&nbsp;<b>T</b>erminal&nbsp;·&nbsp;<b>C</b>onnect
 </p>
 
 <p align="center">
-  内网 Mac 上的 Cursor + Opus 4.7，<br>
-  通过飞书在任何地方驱动它
+  Drive your Mac's <a href="https://cursor.com">Cursor</a> + <b>Opus 4.7 Thinking High</b> from <a href="https://www.larksuite.com">Feishu / Lark</a> chat.<br>
+  Anywhere with a phone. Same seat, same bill, same model.
 </p>
 
 <p align="center">
-  <img alt="status" src="https://img.shields.io/badge/status-internal_alpha-orange">
-  <img alt="python" src="https://img.shields.io/badge/python-3.9%2B-blue">
-  <img alt="platform" src="https://img.shields.io/badge/platform-macOS-lightgrey">
-  <img alt="runtime" src="https://img.shields.io/badge/runtime-launchd%20%2B%20caffeinate-green">
-  <img alt="license" src="https://img.shields.io/badge/license-internal_use-red">
+  <img alt="status"   src="https://img.shields.io/badge/status-alpha-orange?style=flat-square">
+  <img alt="python"   src="https://img.shields.io/badge/python-3.9%2B-blue?style=flat-square">
+  <img alt="platform" src="https://img.shields.io/badge/platform-macOS-lightgrey?style=flat-square">
+  <img alt="runtime"  src="https://img.shields.io/badge/launchd-autostart-green?style=flat-square">
+  <img alt="stars"    src="https://img.shields.io/github/stars/HenryZ838978/Larksor-TC?style=social">
 </p>
 
 ---
 
-## 是什么
+## ⚡ 30-second pitch
+
+<table align="center">
+<tr>
+<td align="center" width="33%">
+  <h3>📱</h3>
+  <b>你</b><br>
+  <sub>手机 / iPad / 客户现场<br>外网</sub>
+</td>
+<td align="center" width="34%">
+  <h3>↔️</h3>
+  <b>飞书 DM</b><br>
+  <sub>合规通道<br>已被公司放行</sub>
+</td>
+<td align="center" width="33%">
+  <h3>🖥️</h3>
+  <b>你的工位 Mac</b><br>
+  <sub>Cursor 团队配额<br>Opus 4.7 Thinking High</sub>
+</td>
+</tr>
+</table>
 
 <p align="center">
-  <img src="assets/architecture.svg" alt="Architecture" width="900">
+  <i>从你已经付费的 Cursor seat，把 Opus 延伸到任何你能开飞书的设备。</i>
 </p>
-
-跑在你 Mac 上的桥接进程，通过 **lark-oapi 长连接** 接飞书、通过 **cursor-cli** 调你已付费的 Cursor 配额。
-
-- Mac 只发起 outbound 连接 → **不需要公网 IP / VPN / 反向代理**
-- 飞书是公司放行的合规通道 → **内外网都通**
-- 用的是你 Cursor 团队订阅的 Opus 4.7 配额 → **零额外采购**
 
 ---
 
-## 长什么样
-
-<details open>
-<summary>飞书里实际的对话卡片（点击折叠）</summary>
+## 👀 What it looks like
 
 <p align="center">
-  <img src="assets/feishu-card.svg" alt="Feishu Card Preview" width="720">
+  <img src="assets/feishu-card.svg" alt="Feishu card preview" width="640">
 </p>
 
-> 上面是 SVG mockup，可以用真截图替换 `assets/feishu-card.svg`
+<sub align="center">
 
-</details>
+▾ 流式打字机回答 · ▾ thinking 折叠面板 · ▾ tool calls 折叠面板 · ▾ token + 耗时元数据  
+(SVG mock; 真截图欢迎 PR)
+
+</sub>
 
 ---
 
-## 装机
+## 🏗 Architecture
 
 <p align="center">
-  <img src="assets/install-flow.svg" alt="Install Flow" width="880">
+  <img src="assets/architecture.svg" alt="Architecture" width="820">
 </p>
 
-### Step 1 · 你做（5 分钟，浏览器里）
+```
+[ phone/ipad ]  ──DM──►  [ Feishu WSS ]  ──events──►  [ your Mac ]
+                                                          │
+   ◄──── streaming CardKit replies ◄── lark-oapi SDK ◄── bridge.py
+                                                          │
+                                                          └─► cursor-cli
+                                                              (Opus 4.7)
+```
 
-打开 [飞书开发者后台](https://open.feishu.cn/app) → 创建企业自建应用 → 命名 `<你的名字>的飞书CLI` →
-启用机器人 → 勾以下权限并提交审批：
-
-| 权限                       | 用途                           |
-| -------------------------- | ------------------------------ |
-| `im:message`               | 收发消息                       |
-| `im:message:send_as_bot`   | 以机器人身份发消息             |
-| `cardkit:card:write`       | 写流式卡片                     |
-
-订阅事件：`im.message.receive_v1`、`card.action.trigger`。
-
-审批通过后，从"凭证与基础信息"复制 **App ID** + **App Secret**。
-
-### Step 2 · Cursor 做（1 分钟，全自动）
-
-把下面这段贴到你 **Cursor IDE 的对话框**，回车：
-
-````text
-我要装 Larksor-TC。请按以下步骤帮我做完：
-
-1. 确认 ~/larksor-tc/ 已存在（应有 bridge.py、install.sh、README.md）。
-   不存在的话告诉我去哪 clone。
-
-2. 跑 `git config user.name || whoami | head -c 20` 拿我的名字，记为 $MY_NAME。
-
-3. 用 `open https://open.feishu.cn/app` 在浏览器打开飞书后台，
-   把 README.md 里 "Step 1" 的步骤完整复述给我让我照做（边做边告诉你进度）。
-   应用名建议 "${MY_NAME}的飞书CLI"。
-
-4. 我把 App ID + App Secret 贴给你后，请用环境变量传给 installer：
-   `LARK_APP_ID=<我贴的ID> LARK_APP_SECRET=<我贴的Secret> bash ~/larksor-tc/install.sh`
-
-5. 把 install.sh 输出最后 20 行给我看。
-
-6. 让我去飞书 DM 我刚创建的 bot 发 "hi"，30 秒后 `tail -n 20 ~/larksor-tc/bridge.log`，
-   确认看到 "<- ou_..." 和 "SDK ws client starting"。如果没看到，帮我看哪一步漏了。
-
-注意：
-- App Secret 只走环境变量 + 0600 权限的 ~/larksor-tc/secrets.env
-- install.sh 幂等，重复跑没事
-````
-
-完事。`launchd` 接管，**关机重启 / 合页过夜都不用管**。
+Mac 只发起 **outbound** 连接 — 不需要公网 IP、不需要 VPN、不需要反向代理。
 
 ---
 
-## 命令速查
+## 🚀 Quick start
+
+<p align="center">
+  <img src="assets/install-flow.svg" alt="Install flow" width="820">
+</p>
+
+```bash
+# 1. clone
+git clone https://github.com/HenryZ838978/Larksor-TC.git ~/larksor-tc
+
+# 2. 去 https://open.feishu.cn/app 创建一个 "<你的名字>的飞书CLI" bot，
+#    勾 im:message + im:message:send_as_bot + cardkit:card:write，
+#    订阅 im.message.receive_v1 + card.action.trigger，记下 App ID + Secret
+
+# 3. install
+LARK_APP_ID=cli_xxxxxxxxxxxxxxxx \
+LARK_APP_SECRET=xxxxxxxxxxxxxxxx \
+bash ~/larksor-tc/install.sh
+
+# 4. 在飞书 DM 你刚建的那个 bot 发 "hi"，应当收到流式卡片
+```
+
+懒得自己跑命令？把 README 里 "Step 2" 那段贴给你 Cursor IDE 的对话框，它会自动跑完。
+
+---
+
+## 🎯 Why this exists
+
+|                                          | Without Larksor-TC          | With Larksor-TC              |
+| ---------------------------------------- | --------------------------- | ---------------------------- |
+| 用 Opus 4.7 Thinking High（不在工位 Mac 上时） | $$$ Anthropic 直连 / 限速 third-party | 已付费的 Cursor seat，0 元增量 |
+| 内网代码 + 私有数据                          | VPN + 远程桌面 + 跨网代理      | 飞书 DM，公司本来就放行           |
+| 离开工位时 agent 跑到一半中断                | 等下班                       | 手机点重试 / 切模型 / 换 chat   |
+| 给桌面同事 demo                            | 凑过来看屏幕                  | 群里贴飞书消息                 |
+
+---
+
+## 🧰 What's inside
+
+- 🎴 **CardKit v2 流式卡片**：打字机式 token 输出，markdown 代码高亮，10/s update QPS  
+- 💭 **Thinking 折叠面板**：opus / sonnet thinking 模型的 reasoning 默认收起，点开看  
+- 🔧 **Tool calls 折叠面板**：实时显示 `shell` / `read` / `edit` / `grep` / `glob` / `mcp` 等工具调用，运行中展开，结束自动折叠  
+- 📷 **图片消息**：手机截图 DM 给 bot → 自动落 `~/larksor-tc/inbox/` → 下一条 prompt 自动带上，opus 多模态读图  
+- 📁 **Per-chat workspace**：`/cd ~/proj/foo` 或自然语言 "切到 ~/proj/foo"，每个 chat 独立工作目录  
+- 🪙 **Token + cost 追踪**：SQLite 持久化每个 turn 的 tokens + 耗时；`/cost today` / `/history N`  
+- 💬 **Chat 管理**：`/ls` / `/resume <N>` / `/new`，标题自动用首条 prompt 前 40 字  
+- ⚙️ **launchd 自启 + caffeinate**：开机自动起，跑期间防 idle-sleep  
+- 🚦 **熔断**：15 分钟硬超时，`resource_exhausted` 友好提示，agent 崩了卡片有报错不空挂  
+- 🌐 **lark-oapi SDK 直连**：避免 `lark-cli` subprocess 冷启动延迟，按钮 callback 能正确返回 toast  
+
+---
+
+## 📜 Commands cheat sheet
 
 ```text
 # 切换
@@ -116,11 +147,7 @@
 /resume 3                切到 /ls 列表第 3 个 chat
 
 # 信息
-/help                    全部命令
-/status                  当前 chat / model / workspace
-/history 5               最近 5 个 turn（含 token + 耗时）
-/cost today              今日 token 用量
-/ls                      最近 10 个 chat
+/help     /status     /history 5     /cost today     /ls
 
 # 操作
 /include path/to/file    把 Mac 文件随下一条 prompt 一起送
@@ -130,45 +157,22 @@
 /ask  <prompt>           ask 模式（Q&A 只读）
 
 # 中文自然语言（同样生效）
-换模型 opus
-切到 ~/proj/foo
+换模型 opus      切到 ~/proj/foo      用 sonnet 模型
 ```
 
 ---
 
-## 维护
-
-| 操作                    | 命令                                                                      |
-| ----------------------- | ------------------------------------------------------------------------- |
-| 看实时日志              | `tail -f ~/larksor-tc/bridge.log`                                         |
-| 重启                    | `launchctl kickstart -k gui/$UID/cn.modelbest.larksor-tc`                 |
-| 临时停（重启 Mac 会拉起）| `launchctl bootout gui/$UID/cn.modelbest.larksor-tc`                      |
-| 状态                    | `launchctl print gui/$UID/cn.modelbest.larksor-tc \| grep state`          |
-| 升级（git pull 后）      | `launchctl kickstart -k gui/$UID/cn.modelbest.larksor-tc`                 |
-| 卸载（保留历史）         | `bash ~/larksor-tc/uninstall.sh`                                          |
-| 彻底卸载                | `bash ~/larksor-tc/uninstall.sh --purge`                                  |
-
----
-
-## 配置
-
-`~/larksor-tc/secrets.env` (0600)：
+## 🔧 Maintenance
 
 ```bash
-LARK_APP_ID=cli_xxxxxxxxxxxxxxxx
-LARK_APP_SECRET=xxxxxxxxxxxxxxxx
+tail -f ~/larksor-tc/bridge.log                           # 实时日志
+launchctl kickstart -k gui/$UID/cn.modelbest.larksor-tc   # 重启
+launchctl bootout    gui/$UID/cn.modelbest.larksor-tc     # 临时停
+bash ~/larksor-tc/uninstall.sh                            # 卸载
+bash ~/larksor-tc/uninstall.sh --purge                    # 卸载 + 清历史
 ```
 
-可选环境变量（也可写在 launchd plist 的 `EnvironmentVariables`）：
-
-| 变量                       | 默认                          | 作用                                              |
-| -------------------------- | ----------------------------- | ------------------------------------------------- |
-| `BRIDGE_MODEL`             | 自动                          | 强制默认模型；不设则按 cli-config 的 maxMode 自适应 |
-| `BRIDGE_WORKSPACE`         | `$HOME`                       | 全局默认 workspace                                |
-| `BRIDGE_TENANT`            | `ModelBest`                   | 卡片标题里的租户名                                |
-| `BRIDGE_AGENT_TIMEOUT_S`   | `900`                         | agent 单次硬超时（秒）                            |
-
-要用 Opus 4.7 全家，`~/.cursor/cli-config.json` 必须开 Max Mode：
+要用 **Opus 4.7** 全家，`~/.cursor/cli-config.json` 必须开 Max Mode：
 
 ```json
 { "maxMode": true, "model": { "maxMode": true } }
@@ -176,27 +180,26 @@ LARK_APP_SECRET=xxxxxxxxxxxxxxxx
 
 ---
 
-## 排错
+## 🗺 Roadmap
 
-| 症状                                  | 处理                                                                    |
-| ------------------------------------- | ----------------------------------------------------------------------- |
-| 卡片 `(agent exited rc=1)` + `resource_exhausted` | `/new` 起新 chat（老 chat 多模型混杂 context 超载）          |
-| 卡片 `Max Mode Required`              | 改 cli-config 把两个 `maxMode` 都设 `true`；或 `/model sonnet-thinking` |
-| 标题 `thinking…` 不动                 | 换非 thinking 模型；或换 `sonnet-thinking` / `opus-thinking-high`       |
-| 合页一段时间后飞书发消息没回           | 系统设置打开 "Prevent automatic sleeping when display is off"           |
-| 点按钮弹红 toast 200340               | bridge 已默认走 SDK，应当不会出。出了看 `bridge.log` 找 `SDK ws client` |
+| Phase | Status      | Highlights                                                                 |
+| ----- | ----------- | -------------------------------------------------------------------------- |
+| 1     | ✅ alpha     | cursor-cli backend, 单用户自部署, mdou skill 内部分发                        |
+| 2     | 🚧 planned  | 接 Claude Code / Codex / DeepSeek-harness 作为可替换 backend；群聊 @ 模式 |
+| 3     | 🌱 maybe    | 公司级 cost dashboard, 多人协作 chat, Cloud Agent handoff                 |
 
 ---
 
-## 不在 Phase 1 范围
+## 🙏 Credits & Inspiration
 
-- 多用户共享 bot（每人自部署）
-- 接 Claude Code / Codex / DeepSeek-harness 作为 backend
-- 群聊 @ 模式
-- 公司级 dashboard / cost 聚合
+- [Cursor](https://cursor.com) — the IDE this thing borrows compute from  
+- [Lark Open Platform](https://open.feishu.cn) — the rails this runs on  
+- [`@HenryZ838978/deepseek-harness`](https://github.com/HenryZ838978/deepseek-harness) — sibling project; same dark humor, different beast  
+- [ModelBest](https://modelbest.cn) — for letting me dogfood this internally  
 
----
-
-## License
-
-仅供 ModelBest 内部使用。**不要把 `secrets.env` 提交到 git**。
+<p align="center">
+  <sub>
+    ⭐ <b>If this saved you a single train ride back to the office, star the repo.</b> That's all I'm asking.<br>
+    PRs / issues welcome. License: internal alpha, do not commit your <code>secrets.env</code>.
+  </sub>
+</p>
