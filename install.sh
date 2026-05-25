@@ -4,10 +4,17 @@
 # Usage:
 #   bash install.sh                              (interactive prompts)
 #   LARK_APP_ID=cli_x LARK_APP_SECRET=y bash install.sh
+#   LARKSOR_CN=1 bash install.sh                 (use CN mirrors)
 #   bash install.sh --app-id cli_x --app-secret y
 #
+# Env knobs:
+#   LARKSOR_CN=1   route brew (USTC), pip (Tsinghua TUNA), npm (npmmirror)
+#                  through mainland-China mirrors; rewrites Homebrew env
+#                  vars + npm registry only for this run (pip writes to
+#                  ~/.config/pip/pip.conf, which is also reversible).
+#
 # What it does:
-#   1. Ensures Homebrew, node, python3, tmux, jq are present
+#   1. Ensures Homebrew, node, python3, jq are present (tmux optional)
 #   2. Installs @larksuite/cli (npm), lark-oapi (pip), Cursor CLI (curl)
 #   3. Runs lark-cli OAuth login if not already logged in
 #   4. Writes ~/larksor-tc/secrets.env (0600) with App ID + Secret
@@ -49,24 +56,63 @@ die()  { printf "\033[1;31m[fail]\033[0m %s\n" "$*" >&2; exit 1; }
 [[ -f "$PLIST_TEMPLATE" ]] || die "$PLIST_TEMPLATE missing"
 
 # --------------------------------------------------------------------------
+# 0.5. Mirror selection (LARKSOR_CN=1 → switch brew/pip/npm to CN mirrors)
+# --------------------------------------------------------------------------
+# Why this lives in the installer (not only in HANDOFF.md): users running
+# install.sh by hand (Option B in README) skip the LLM walkthrough, so we
+# still need a single env flag they can flip. The mirror domains are read
+# by brew / pip / npm directly via env + per-user config; nothing here
+# writes to /etc.
+
+if [[ "${LARKSOR_CN:-0}" == "1" ]]; then
+  say "LARKSOR_CN=1 → using mainland-China mirrors (USTC / Tsinghua / npmmirror)"
+  export HOMEBREW_BREW_GIT_REMOTE="${HOMEBREW_BREW_GIT_REMOTE:-https://mirrors.ustc.edu.cn/brew.git}"
+  export HOMEBREW_CORE_GIT_REMOTE="${HOMEBREW_CORE_GIT_REMOTE:-https://mirrors.ustc.edu.cn/homebrew-core.git}"
+  export HOMEBREW_BOTTLE_DOMAIN="${HOMEBREW_BOTTLE_DOMAIN:-https://mirrors.ustc.edu.cn/homebrew-bottles}"
+  export HOMEBREW_API_DOMAIN="${HOMEBREW_API_DOMAIN:-https://mirrors.ustc.edu.cn/homebrew-bottles/api}"
+  PIP_INDEX_URL_FLAG=(--index-url https://pypi.tuna.tsinghua.edu.cn/simple
+                      --trusted-host pypi.tuna.tsinghua.edu.cn)
+  BREW_BOOTSTRAP_URL="https://mirrors.ustc.edu.cn/misc/brew-install.sh"
+  NPM_REGISTRY="https://registry.npmmirror.com"
+else
+  PIP_INDEX_URL_FLAG=()
+  BREW_BOOTSTRAP_URL="https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
+  NPM_REGISTRY=""
+fi
+
+# --------------------------------------------------------------------------
 # 1. Homebrew + brew packages
 # --------------------------------------------------------------------------
 
 if ! command -v brew >/dev/null 2>&1; then
-  say "Homebrew not found - installing"
-  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-  # add to PATH for this shell
+  say "Homebrew not found - installing from $BREW_BOOTSTRAP_URL"
+  /bin/bash -c "$(curl -fsSL "$BREW_BOOTSTRAP_URL")"
   if [[ -x /opt/homebrew/bin/brew ]]; then
     eval "$(/opt/homebrew/bin/brew shellenv)"
   fi
 fi
 
-for pkg in node tmux jq; do
+# tmux is optional now (we no longer require it; bridge runs under launchd
+# directly). Install it if missing but never block on it.
+for pkg in node jq; do
   if ! command -v "$pkg" >/dev/null 2>&1; then
     say "brew install $pkg"
     brew install "$pkg"
   fi
 done
+if ! command -v tmux >/dev/null 2>&1; then
+  say "brew install tmux (optional, for manual session debugging)"
+  brew install tmux || warn "tmux install failed - skipping (not required)"
+fi
+
+# npm registry override (only if user opted in to CN mirrors)
+if [[ -n "$NPM_REGISTRY" ]] && command -v npm >/dev/null 2>&1; then
+  current_reg="$(npm config get registry 2>/dev/null || echo)"
+  if [[ "$current_reg" != "$NPM_REGISTRY"* ]]; then
+    say "npm config set registry $NPM_REGISTRY"
+    npm config set registry "$NPM_REGISTRY"
+  fi
+fi
 
 # Ensure global npm prefix is owned by the user (avoid sudo for -g installs).
 if [[ "$(npm config get prefix 2>/dev/null)" == "/usr/local" || \
@@ -97,7 +143,7 @@ if ! command -v agent >/dev/null 2>&1; then
 fi
 
 say "ensuring lark-oapi (Python) is up to date"
-python3 -m pip install --user --quiet --upgrade lark-oapi
+python3 -m pip install --user --quiet --upgrade "${PIP_INDEX_URL_FLAG[@]}" lark-oapi
 
 # --------------------------------------------------------------------------
 # 3. Cursor CLI login (only if not already)
@@ -181,9 +227,10 @@ chmod 644 "$PLIST_TARGET"
 # Stop any pre-existing instance (manual `python3 bridge.py` or old plist),
 # so we don't end up with two ws clients fighting for the same event stream.
 launchctl bootout "gui/$UID/${PLIST_LABEL}" 2>/dev/null || true
-tmux kill-session -t larksor-tc 2>/dev/null || true
-# also kill any leftover legacy session
-tmux kill-session -t cursorbridge 2>/dev/null || true
+if command -v tmux >/dev/null 2>&1; then
+  tmux kill-session -t larksor-tc 2>/dev/null || true
+  tmux kill-session -t cursorbridge 2>/dev/null || true
+fi
 
 say "loading launchd job: $PLIST_LABEL"
 launchctl bootstrap "gui/$UID" "$PLIST_TARGET"
