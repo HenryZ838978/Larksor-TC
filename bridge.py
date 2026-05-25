@@ -598,9 +598,17 @@ def render_tools(tools: list[dict]) -> str:
         line = f"{status} {t.get('icon', '')} {t.get('label', '')}".rstrip()
         if t.get("elapsed_ms") not in (None, 0):
             line += f"  _{t['elapsed_ms']/1000:.1f}s_"
-        if t.get("rc") not in (None, 0):
-            line += f"  ⚠️ rc={t['rc']}"
+        # No rc number is shown to the end user, ever. rc is part of
+        # the *internal* dialogue between Claude and the shell — Claude
+        # already consumes the rc and decides what to do next; surfacing
+        # it again in the card was bridge "speaking for Opus" and made
+        # routine grep/diff exits read as system errors. The ✓/✗ icon
+        # gives an implicit success cue; if Claude actually failed at a
+        # task, its answer text will say so in plain language.
         if t.get("error"):
+            # An explicit `error` field is content emitted *by the tool
+            # itself* (compiler stderr, JS exception, etc.), not a
+            # bridge-synthesized rc. Worth surfacing — but truncated.
             line += f"  ⚠️ {str(t['error'])[:80]}"
         lines.append("- " + line)
     return "\n".join(lines)
@@ -611,13 +619,14 @@ def render_tools_header(tools: list[dict], done: bool = False) -> str:
         return "🔧 _no tool calls yet_"
     n = len(tools)
     total_ms = sum(t.get("elapsed_ms") or 0 for t in tools)
-    failed = sum(1 for t in tools
-                 if t.get("status_icon") == "✗" or t.get("error"))
+    # No "N failed" counter either. The header should read like a quiet
+    # progress badge, not a status board. If Claude actually failed at
+    # the user's task, that narrative belongs in the answer text — not
+    # in a bridge-synthesized "⚠️ N failed" sticker that scares users
+    # whenever a routine `git diff --quiet` exits 1.
     bits = [f"🔧 {n} tool calls"]
     if total_ms:
         bits.append(f"{total_ms/1000:.1f}s")
-    if failed:
-        bits.append(f"⚠️ {failed} failed")
     return "  ·  ".join(bits)
 
 
@@ -631,6 +640,46 @@ def render_thinking_header(chunks_total: int, elapsed_s: Optional[float],
             bits.append(f"{elapsed_s:.1f}s")
         return "  ·  ".join(bits)
     return f"💭 thinking... ({chunks_total} chars)"
+
+
+# A todoWriteToolCall used to be folded into the generic tool calls panel
+# as a single line ("update todos (5)"), which made the actual plan
+# invisible. Bumping it to its own collapsible panel — one click and the
+# user sees exactly what the agent committed to do for this turn.
+def render_todos(todos: list[dict]) -> str:
+    if not todos:
+        return "_no todos yet_"
+    icon_map = {
+        "in_progress": "🔄",
+        "pending":     "○",
+        "completed":   "✅",
+        "cancelled":   "✗",
+    }
+    lines = []
+    for t in todos:
+        status = (t.get("status") or "pending").lower()
+        icon = icon_map.get(status, "•")
+        content = (t.get("content") or "").strip()
+        if status == "completed":
+            content = f"~~{content}~~"
+        elif status == "in_progress":
+            content = f"**{content}**"
+        elif status == "cancelled":
+            content = f"_{content}_"
+        lines.append(f"- {icon} {content}")
+    return "\n".join(lines)
+
+
+def render_todos_header(todos: list[dict]) -> str:
+    if not todos:
+        return "📋 _no todos_"
+    n = len(todos)
+    done = sum(1 for t in todos if (t.get("status") or "").lower() == "completed")
+    in_prog = sum(1 for t in todos if (t.get("status") or "").lower() == "in_progress")
+    bits = [f"📋 todos {done}/{n}"]
+    if in_prog:
+        bits.append(f"🔄 {in_prog} in-progress")
+    return "  ·  ".join(bits)
 
 
 def render_footer(result_evt: dict, started: float) -> str:
@@ -698,6 +747,27 @@ def build_initial_card(chat_id: Optional[str], model: str,
                     ],
                 },
                 {
+                    # Todo list panel - separate from tools so the agent's
+                    # plan is visible at a glance instead of being buried
+                    # as a single "update todos (N)" line inside the
+                    # collapsed tool-calls panel.
+                    "tag": "collapsible_panel",
+                    "element_id": "todos_panel",
+                    "expanded": False,  # auto-expands on first todoWrite
+                    "header": {
+                        "title": {
+                            "tag": "markdown",
+                            "element_id": "todos_header",
+                            "content": render_todos_header([]),
+                        },
+                        "vertical_align": "center",
+                    },
+                    "elements": [
+                        {"tag": "markdown",
+                         "element_id": "todos", "content": ""},
+                    ],
+                },
+                {
                     # Tools panel - expanded during run so user sees live
                     # progress; we auto-collapse it after the result event so
                     # the answer dominates once the run is done.
@@ -728,6 +798,16 @@ def build_initial_card(chat_id: Optional[str], model: str,
 # ----------------------------------------------------------------------------
 
 class CardUpdater:
+    # Once Feishu CardKit closes the streaming session (server-side TTL is
+    # ~10 min on a busy card), every subsequent stream_text call returns
+    # 300309 ("streaming mode is closed"). We used to log one ERROR per
+    # element per push (5 Hz * 6 elements = 30 errors/sec) for as long as
+    # the agent kept producing, polluting bridge.log and burning Feishu
+    # quota. After this many consecutive failures we mark the card as
+    # dead and silently drop pushes — the agent run continues and the
+    # final answer still lands in state.db.
+    DEAD_AFTER_CONSEC_FAILURES = 30
+
     def __init__(self, card_id: str):
         self.card_id = card_id
         self.pending: dict[str, str] = {}
@@ -735,10 +815,14 @@ class CardUpdater:
         self.seq = 0
         self.lock = threading.Lock()
         self.alive = True
+        self.consec_fail = 0
+        self.dead = False
         self.t = threading.Thread(target=self._loop, daemon=True)
         self.t.start()
 
     def set(self, element_id: str, content: str) -> None:
+        if self.dead:
+            return
         with self.lock:
             self.pending[element_id] = content
 
@@ -748,6 +832,8 @@ class CardUpdater:
             return self.seq
 
     def _flush_once(self) -> None:
+        if self.dead:
+            return
         with self.lock:
             snapshot = dict(self.pending)
         for eid, content in snapshot.items():
@@ -756,6 +842,16 @@ class CardUpdater:
             seq = self._next_seq()
             if stream_text(self.card_id, eid, content, seq):
                 self.last_pushed[eid] = content
+                self.consec_fail = 0
+            else:
+                self.consec_fail += 1
+                if self.consec_fail >= self.DEAD_AFTER_CONSEC_FAILURES:
+                    self.dead = True
+                    log(f"CardUpdater: card {self.card_id[:12]}... declared "
+                        f"dead after {self.consec_fail} consecutive push "
+                        f"failures; agent run continues, final result "
+                        f"will still be saved to state.db")
+                    return
 
     def _loop(self) -> None:
         while self.alive:
@@ -799,6 +895,16 @@ NL_CD_RE = re.compile(
     r"\s*[`'\"]?([~/]\S+?)[`'\"]?\s*$",
     re.IGNORECASE)
 
+# Anchored — must be a STANDALONE phrase, not embedded in a larger
+# sentence. So "我们开个新对话讨论 X" still goes through to the model,
+# but a bare "新对话" maps to the /new slash command.
+NL_NEW_RE = re.compile(
+    r"^(?:新(?:对话|会话|聊天)|"
+    r"开(?:启)?新(?:对话|会话|聊天)|"
+    r"开始新(?:对话|会话|聊天)|"
+    r"new\s*chat)\s*[。.!！]?$",
+    re.IGNORECASE)
+
 
 def normalize_command(text: str) -> Optional[tuple[str, str]]:
     text = text.strip()
@@ -808,6 +914,8 @@ def normalize_command(text: str) -> Optional[tuple[str, str]]:
     m = CHINESE_MODEL_RE.match(text)
     if m:
         return ("/model", m.group(1))
+    if NL_NEW_RE.match(text):
+        return ("/new", "")
     return None
 
 
@@ -823,6 +931,7 @@ plain text             -> next turn of current chat (or new chat if none)
 /clear-include         drop all pending includes
 /retry                 re-run the last prompt
 /cancel                SIGINT the currently running agent
+/reconnect             force WSS reconnect (kills bridge, launchd respawns)
 /cost [today|week|all] token usage summary
 /history [N]           recent N turns (default 5)
 /ls                    list recent chats
@@ -834,10 +943,12 @@ plain text             -> next turn of current chat (or new chat if none)
 
 Chinese shortcuts:
   换模型 auto  /  切换到 sonnet-thinking  /  用 opus-thinking 模型
+  新对话 / 新会话 / 开新对话      (== /new)
 
 Card layout:
   meta (chat · model · workspace · tokens · elapsed)
   ▸ 💭 thinking  (collapsed; auto-fills if model emits reasoning)
+  ▸ 📋 todos     (collapsed; auto-expands when agent commits to a plan)
   ▸ 🔧 tool calls  (live + expanded while running, auto-collapses on result)
   answer  (streaming)
 
@@ -1001,6 +1112,9 @@ def _format_tool(kind: str, body: dict, call_id: Optional[str]) -> dict:
     rc = None
     icon = "•"
     label = f"`{kind}`"
+    # Only populated for todoWriteToolCall — used by stream_agent_into_card
+    # to route the payload to its own panel instead of cluttering tools.
+    extra_todos: Optional[list] = None
 
     if kind == "shellToolCall":
         cmd = (args.get("command") or "").strip()
@@ -1063,6 +1177,7 @@ def _format_tool(kind: str, body: dict, call_id: Optional[str]) -> dict:
         todos = args.get("todos") or []
         label = f"update todos ({len(todos)})"
         icon = "📋"
+        extra_todos = todos
     elif kind == "mcpToolCall":
         server = args.get("serverName") or args.get("server") or ""
         tname = args.get("toolName") or args.get("name") or "?"
@@ -1081,6 +1196,7 @@ def _format_tool(kind: str, body: dict, call_id: Optional[str]) -> dict:
         "elapsed_ms": elapsed_ms,
         "rc": rc,
         "error": error,
+        "todos": extra_todos,
     }
 
 
@@ -1099,6 +1215,8 @@ def stream_agent_into_card(state: dict, job: Job, card_id: str,
     tools_index: dict[str, int] = {}
     thinking_chunks: list[str] = []
     thinking_started_at: Optional[float] = None
+    todos_state: list[dict] = []
+    todos_panel_expanded = False  # one-shot expand on first todoWrite
     agent_status_lines: list[str] = []  # T:/S: messages from agent (errors etc.)
     final_event: dict = {"is_error": True, "result": "(no result event)"}
 
@@ -1143,13 +1261,35 @@ def stream_agent_into_card(state: dict, job: Job, card_id: str,
 
             if t == "tool_call":
                 info = extract_tool_info(evt)
+                # Route todoWriteToolCall to its own panel instead of
+                # listing it as one more grey line in the tool calls
+                # panel — the actual plan deserves a top-level slot.
+                if info.get("kind") == "todoWriteToolCall":
+                    if info.get("todos"):
+                        todos_state.clear()
+                        todos_state.extend(info["todos"])
+                        updater.set("todos", render_todos(todos_state))
+                        updater.set("todos_header",
+                                    render_todos_header(todos_state))
+                        if not todos_panel_expanded:
+                            try:
+                                patch_element(card_id, "todos_panel",
+                                              {"expanded": True})
+                                todos_panel_expanded = True
+                            except Exception as exc:
+                                log(f"todos_panel expand failed: {exc}")
+                    continue  # do NOT mix into tools_state
                 if sub == "started":
                     info["status_icon"] = "⚙"
                     tools_index[info["id"]] = len(tools_state)
                     tools_state.append(info)
                 elif sub == "completed":
                     idx = tools_index.get(info["id"])
-                    failed = (info.get("rc") not in (None, 0)) or info.get("error")
+                    # rc=1 is benign for grep/git-diff/test; only treat
+                    # rc>=2 (or explicit error) as an actual ✗ failure.
+                    rc_val = info.get("rc")
+                    failed = bool(info.get("error")) or \
+                        (rc_val is not None and rc_val >= 2)
                     if idx is not None:
                         prev = tools_state[idx]
                         # keep icon/label from started, layer in result fields
@@ -1507,6 +1647,23 @@ def handle(state: dict, job: Job, q: "queue.Queue[Job]") -> None:
             except Exception as exc:
                 lark_send_text(job.open_id, f"[bridge] cancel error: {exc}")
         return
+    if cmd == "/reconnect":
+        # Client-side hot-fix: when the WSS goes silent (Feishu stops
+        # delivering im.message.receive_v1 to us, e.g. after a long string
+        # of upstream errors), the bridge has no in-process way to
+        # negotiate a fresh subscription. Easiest reliable recovery:
+        # exit, let launchd respawn us within ThrottleInterval (10s).
+        # The new process establishes a fresh WSS conn_id and Feishu
+        # immediately replays buffered events. Use this when you DM the
+        # bot and never see a card come back.
+        lark_send_text(
+            job.open_id,
+            "🔄 即将重启 bridge，10s 内 launchd 自动拉起新进程。\n"
+            "下一条消息会用新的 WSS 连接处理。")
+        log("user requested /reconnect — exiting for launchd respawn")
+        # Tiny delay so the lark_send_text has time to be flushed.
+        threading.Timer(1.0, lambda: os._exit(7)).start()
+        return
     if cmd == "/cost":
         scope = arg.lower().strip() or "today"
         now = time.time()
@@ -1738,7 +1895,7 @@ def start_sdk_event_loop(state: dict, q: "queue.Queue[Job]",
       - reuses the same Job queue + handle() so worker semantics are unchanged
     """
     import lark_oapi as lark
-    from lark_oapi.api.im.v1 import P2ImMessageReceiveV1
+    from lark_oapi.api.im.v1 import P2ImMessageReceiveV1, P2ImMessageMessageReadV1
     from lark_oapi.event.callback.model.p2_card_action_trigger import (
         P2CardActionTrigger, P2CardActionTriggerResponse,
     )
@@ -1885,8 +2042,22 @@ def start_sdk_event_loop(state: dict, q: "queue.Queue[Job]",
                 "toast": {"type": "error", "content": f"bridge error: {exc}"},
             })
 
+    def on_message_read(_: "P2ImMessageMessageReadV1") -> None:
+        # No-op handler. Feishu pushes one of these every time the user
+        # opens the chat / scrolls past a bot message. We don't care about
+        # read receipts — but if NO processor is registered, the SDK logs
+        # a fat ERROR ("processor not found") for every event. After a few
+        # hours of accumulated errors, Feishu server-side starts to
+        # back-off / drop delivery of im.message.receive_v1 to this app
+        # (the exact symptom: bridge looks alive, WSS conn_id stable, but
+        # new text DMs from the user just stop arriving). Registering a
+        # silent processor kills the spam at the root.
+        # See bridge.log:  err: processor not found, type: im.message.message_read_v1
+        return
+
     handler = (lark.EventDispatcherHandler.builder("", "")
                .register_p2_im_message_receive_v1(on_message)
+               .register_p2_im_message_message_read_v1(on_message_read)
                .register_p2_card_action_trigger(on_card_action)
                .build())
 
